@@ -1,23 +1,19 @@
 from __future__ import print_function
 import sys
 import os
-os.environ['GLOG_minloglevel'] = '2'
 
 import argparse
-import picamera
-import picamera.array
 import cv2
 import time
 import numpy as np
 import skimage.transform
-import caffe
 
+from imutils.video import VideoStream
 from sklearn.preprocessing import normalize
-from sklearn.neighbors import KNeighborsClassifier as kNN
 
 print("Required modules imported.")
 
-def eprint(*args, **kwargs):
+def nprint(*args, **kwargs):
     # print(*args, file=sys.stderr, **kwargs)
     pass
 
@@ -30,10 +26,10 @@ def crop_center(img,cropx,cropy):
 
 
 def rescale(img, input_height, input_width):
-    eprint("Original image shape:" + str(img.shape) + " and remember it should be in H, W, C!")
-    eprint("Model's input shape is %dx%d" % (input_height, input_width))
-    aspect = img.shape[1]/float(img.shape[0])
-    eprint("Orginal aspect ratio: " + str(aspect))
+    nprint("Original image shape:" + str(img.shape) + " and remember it should be in H, W, C!")
+    nprint("Model's input shape is %dx%d" % (input_height, input_width))
+    aspect = img.shape[1] / float(img.shape[0])
+    nprint("Orginal aspect ratio: " + str(aspect))
     
     if(aspect>1):
         # landscape orientation - wide image
@@ -46,7 +42,7 @@ def rescale(img, input_height, input_width):
     if(aspect == 1):
         imgScaled = skimage.transform.resize(img, (input_width, input_height))
 
-    eprint("New image shape:" + str(imgScaled.shape) + " in HWC")
+    nprint("New image shape:" + str(imgScaled.shape) + " in HWC")
     return imgScaled
 
 
@@ -54,7 +50,7 @@ def preprocess_image(img, mean, side=224):
     img = skimage.img_as_float(img).astype(np.float32)
     img = rescale(img, side, side)
     img = crop_center(img, side, side)
-    eprint("After crop: " , img.shape)
+    nprint("After crop: " , img.shape)
 
     # switch to CHW
     img = img.swapaxes(1, 2).swapaxes(0, 1)
@@ -64,7 +60,7 @@ def preprocess_image(img, mean, side=224):
     img = img * 255 - mean
     # add batch size
     img = img[np.newaxis, :, :, :].astype(np.float32)
-    eprint("NCHW: ", img.shape)
+    nprint("NCHW: ", img.shape)
     return img
 
 
@@ -92,14 +88,6 @@ def knn_score(z, X, y, k):
 
 def main(args):
 
-    SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-    MODEL = os.path.join(SCRIPT_DIR, 'extractor/caffe_models/{0}_caffe/{0}'.format(args.model))
-    EXT_NET_DEF = '{}.prototxt'.format(MODEL)
-    EXT_NET_WEIGHTS = '{}.caffemodel'.format(MODEL)
-    LAYER = 'pool5/7x7_s1'  # 'classifier'
-
-    mean = np.array([91.4953, 103.8827, 131.0912]).reshape(3, 1, 1)
-
     if args.people:
         with open(args.people[0]) as f:
             people = [line.rstrip() for line in f]
@@ -110,17 +98,15 @@ def main(args):
         print('Authorized Features:', auth_descriptors.shape)
         
         if args.use_sklearn_knn:
+            from sklearn.neighbors import KNeighborsClassifier as kNN
             knn = kNN(args.k, weights='distance', n_jobs=4)
             knn.fit(auth_descriptors, auth_id)
 
+    # initialize camera
+    vs = VideoStream(usePiCamera=True, framerate=args.framerate, resolution=args.resolution)
+    vs.start()
+
     # initialize face detector
-    """
-    detector = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_alt.xml')
-    if detector.empty():
-        eprint('Detector not loaded properly.')
-        return
-    """
-    
     DET_NET_DEF = 'detector/res10_300x300_ssd.prototxt'
     DET_NET_WEIGHTS = 'detector/res10_300x300_ssd_iter_140000.caffemodel'
     
@@ -129,98 +115,104 @@ def main(args):
     end = time.time()
     print('Detector loading time:', (end - start))
     
-    # initialize the neural net
+    # initialize the extraction network
+    SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+    MODEL = os.path.join(SCRIPT_DIR, 'extractor/caffe_models/{0}_caffe/{0}'.format(args.model))
+    EXT_NET_DEF = '{}.prototxt'.format(MODEL)
+    EXT_NET_WEIGHTS = '{}.caffemodel'.format(MODEL)
+    LAYER = 'pool5/7x7_s1'  # 'classifier'
+    mean = np.array([91.4953, 103.8827, 131.0912]).reshape(3, 1, 1)
+    
     args.use_caffe = 'senet' in args.model
     
     start = time.time()
     if args.use_caffe:
+	os.environ['GLOG_minloglevel'] = '2'
+	import caffe
         extractor = caffe.Net(EXT_NET_DEF, caffe.TEST, weights=EXT_NET_WEIGHTS)
         extractor.blobs['data'].reshape(1, 3, args.side, args.side)
     else:
         extractor = cv2.dnn.readNetFromCaffe(EXT_NET_DEF, EXT_NET_WEIGHTS)
-        
+    
     end = time.time()
-    print('Extractor loading time:', (end - start))    
-
-    with picamera.PiCamera(framerate=args.framerate, resolution=args.resolution) as camera:
-        # camera.start_preview()
-        while True:
-            start_whole = time.time()
-            with picamera.array.PiRGBArray(camera) as stream:
-                # capture image from camera
-                start = time.time()
-                camera.capture(stream, format='bgr')
-                # At this point the image is available as stream.array
-                img = stream.array
-                end = time.time()
-                capture_time = end - start
-                print('\n\tCapture:', capture_time, 's')
+    print('Extractor loading time:', (end - start))
+    
+    while True:
+        start_whole = time.time()
+        # capture image from camera
+        start = time.time()
+        img = vs.read()
+        if img is None: continue  # skip initial empty frames due to camera init. delay
+        end = time.time()
+        capture_time = end - start
+        print('\n\tCapture:', capture_time, 's')
+        
+        # detect faces
+        start = time.time()
+        img_det = cv2.resize(img, (300, 300))
+        img_det = cv2.dnn.blobFromImage(img_det, 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False)
+        detector.setInput(img_det)
+        faces = detector.forward().squeeze()
+        end = time.time()
+        del img_det
+        detection_time = end - start
+        
+        confidences = faces[:, 2]
+        faces = faces[confidences > args.detection_confidence, 3:7]
+        
+        print('\tDetect :', detection_time, 's,', len(faces), 'faces')
+        
+        for face in faces:
+            face *= np.tile(args.resolution, 2)
+            (startX, startY, endX, endY) = face.astype("int")
+            face = img[startY:endY, startX:endX]
             
-            # detect faces
+            if face.size == 0:
+                print('\tDiscarded empty bounding box')
+                continue
+            
+            # preprocess face
             start = time.time()
-            # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # faces = detector.detectMultiScale(gray, 1.25, 6) #, minSize=75, maxSize=500)
-            img_det = cv2.resize(img, (300, 300))
-            img_det = cv2.dnn.blobFromImage(img_det, 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False)
-            detector.setInput(img_det)
-            faces = detector.forward().squeeze()
+            face = preprocess_image(face, mean, side=args.side)
             end = time.time()
-            del img_det
-            detection_time = end - start
-            
-            confidences = faces[:, 2]
-            faces = faces[confidences > args.detection_confidence, 3:7]
-            
-            print('\tDetect :', detection_time, 's,', len(faces), 'faces')
-            # camera.annotate_text = 'Faces: {}'.format(len(faces))
-            
-            for face in faces:
-                face *= np.tile(args.resolution, 2)
-                (startX, startY, endX, endY) = face.astype("int")
-                face = img[startY:endY, startX:endX]
-                
-                # transform image       
-                start = time.time()
-                face = preprocess_image(face, mean, side=args.side)
-                end = time.time()
-                preproc_time = end - start
-                print('\tPreProc:', preproc_time, 's')
+            preproc_time = end - start
+            print('\tPreProc:', preproc_time, 's')
 
-                # run the net and return prediction
+            # get the description
+            start = time.time()
+            if args.use_caffe:
+                extractor.blobs['data'].data[...] = face
+                descriptor = extractor.forward(end=LAYER)[LAYER].squeeze()
+            else:
+                extractor.setInput(face)
+                descriptor = extractor.forward(LAYER)
+            end = time.time()
+            extraction_time = end - start
+            print('\tExtract:', extraction_time, 's')
+            
+            if args.people:
                 start = time.time()
-                if args.use_caffe:
-                    extractor.blobs['data'].data[...] = face
-                    descriptor = extractor.forward(end=LAYER)[LAYER].squeeze()
-                else:
-                    extractor.setInput(face)
-                    descriptor = extractor.forward(LAYER)
-                end = time.time()
-                extraction_time = end - start
-                print('\tExtract:', extraction_time, 's')
+                descriptor = normalize(descriptor.reshape(1,-1))
                 
-                if args.people:
-                    start = time.time()
-                    descriptor = normalize(descriptor.reshape(1,-1))
-                    
-                    if args.use_sklearn_knn:  # sklearn knn 
-                        confidences = knn.predict_proba(descriptor)
-                        person_id = np.argmax(confidences)
-                        confidence = confidences[person_id]
-                    else:  # VIR knn
-                        person_id, confidence = knn_score(descriptor, auth_descriptors, auth_id, args.k)
-                    
-                    end = time.time()
-                    match_time = end - start
-                    
-                    match = people[person_id] if confidence > args.match_confidence else 'Unauthorized'
-                    match = '{} (Conf = {:.2f})'.format(match, confidence)
-                    
-                    print('\tMatch  :', match_time, 's,', match)
-                    
-                    end_whole = time.time()
-                    whole = end_whole - start_whole
-                    print('\tTOTAL  :', whole, 's')
-                    
+                if args.use_sklearn_knn:  # sklearn knn
+                    confidences = knn.predict_proba(descriptor)
+                    person_id = np.argmax(confidences)
+                    confidence = confidences[person_id]
+                else:  # VIR knn
+                    person_id, confidence = knn_score(descriptor, auth_descriptors, auth_id, args.k)
+                
+                end = time.time()
+                match_time = end - start
+                
+                match = people[person_id] if confidence > args.match_confidence else 'Unauthorized'
+                match = '{} (Conf = {:.2f})'.format(match, confidence)
+                
+                print('\tMatch  :', match_time, 's,', match)
+                
+                end_whole = time.time()
+                whole = end_whole - start_whole
+                print('\tTOTAL  :', whole, 's')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deep Face Verifier', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
