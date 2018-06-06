@@ -68,6 +68,31 @@ def preprocess_image(img, mean, side=224):
     return img
 
 
+def knn_score(z, X, y, k):
+    # get set of classes
+    classes = np.sort(np.unique(y))
+    # compute all distances between authorized set and current descriptor
+    all_dists = ((X-z)**2).sum(axis=1)
+    # find kNNs
+    knns = np.argsort(all_dists)[:k]
+    
+    # keep kNN distances and labels
+    knn_dists = all_dists[knns]
+    knn_labels = y[knns]
+    
+    # normalization factors for kNN score
+    norm = knn_dists.sum()
+    
+    # compute score for each class
+    class_scores = [np.sum(knn_dists * (knn_labels == c)) for c in classes]
+    # get higher score
+    predicted_class = classes[np.argmax(class_scores)]
+    # get 1 - smallest distance in the predicted class as confidence
+    confidence = 1 - knn_dists[knn_labels == predicted_class][0]
+
+    return predicted_class, confidence
+
+
 def main(args):
 
     SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -138,7 +163,7 @@ def main(args):
             detection_time = end - start
             
             confidences = faces[:, 2]
-            faces = faces[confidences > args.confidence, 3:7]
+            faces = faces[confidences > args.detection_confidence, 3:7]
             
             print('\tDetect :', detection_time, 's,', len(faces), 'faces')
             # camera.annotate_text = 'Faces: {}'.format(len(faces))
@@ -170,10 +195,14 @@ def main(args):
                 if args.people:
                     start = time.time()
                     descriptor = normalize(descriptor.reshape(1,-1))
-                    person_id = knn.predict(descriptor)
+                    person_id, confidence = knn_score(descriptor, auth_descriptors, auth_id)
+                    # person_id = knn.predict(descriptor)
                     end = time.time()
                     match_time = end - start
-                    print('\tMatch  :', match_time, 's,', people[person_id])
+                    
+                    match = people[person_id] if confidence > args.match_confidence
+                    
+                    print('\tMatch  :', match_time, 's,', match)
                     
                     end_whole = time.time()
                     whole = end_whole - start_whole
@@ -185,7 +214,8 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--model', default='resnet50_ft', choices=['senet50_ft', 'senet50_scratch', 'resnet50_ft', 'resnet50_scratch'], help='feature extractor')
     parser.add_argument('-r', '--resolution', nargs=2, default=(1280, 960), type=int, help='capture resolution (W H)')
     parser.add_argument('-f', '--framerate', default=1, type=int, help='capture framerate')
-    parser.add_argument('-c', '--confidence', type=float, default=0.5, help='minimum probability to filter weak detections')
+    parser.add_argument('--detection-confidence', '--det', type=float, default=0.5, help='minimum probability to filter weak detections')
+    parser.add_argument('--match-confidence', '--match', type=float, default=0.7, help='minimum confidence to accept authentication')
     parser.add_argument('-p', '--people', nargs=2, help='authenticated people\'s ID and features')
     parser.add_argument('-k', default=10, type=int, help='k for kNN classification')
     args = parser.parse_args()
