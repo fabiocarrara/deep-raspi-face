@@ -80,12 +80,9 @@ def knn_score(z, X, y, k):
     knn_dists = all_dists[knns]
     knn_labels = y[knns]
     
-    # normalization factors for kNN score
-    norm = knn_dists.sum()
-    
-    # compute score for each class
+    # compute (unnormalized) dW-kNN score for each class
     class_scores = [np.sum(knn_dists * (knn_labels == c)) for c in classes]
-    # get higher score
+    # get class with higher score
     predicted_class = classes[np.argmax(class_scores)]
     # get 1 - smallest distance in the predicted class as confidence
     confidence = 1 - knn_dists[knn_labels == predicted_class][0]
@@ -107,11 +104,14 @@ def main(args):
         with open(args.people[0]) as f:
             people = [line.rstrip() for line in f]
         people = np.array(people)
+        
         auth_descriptors = np.loadtxt(args.people[1], dtype=np.float32)
         auth_id = np.arange(len(people)).repeat(10)
         print('Authorized Features:', auth_descriptors.shape)
-        knn = kNN(args.k, weights='distance', n_jobs=4)
-        knn.fit(auth_descriptors, auth_id)
+        
+        if args.use_sklearn_knn:
+            knn = kNN(args.k, weights='distance', n_jobs=4)
+            knn.fit(auth_descriptors, auth_id)
 
     # initialize face detector
     """
@@ -130,9 +130,15 @@ def main(args):
     print('Detector loading time:', (end - start))
     
     # initialize the neural net
+    args.use_caffe = 'senet' in args.model
+    
     start = time.time()
-    extractor = caffe.Net(EXT_NET_DEF, caffe.TEST, weights=EXT_NET_WEIGHTS)
-    # extractor = cv2.dnn.readNetFromCaffe(EXT_NET_DEF, EXT_NET_WEIGHTS)
+    if args.use_caffe:
+        extractor = caffe.Net(EXT_NET_DEF, caffe.TEST, weights=EXT_NET_WEIGHTS)
+        extractor.blobs['data'].reshape(1, 3, args.side, args.side)
+    else:
+        extractor = cv2.dnn.readNetFromCaffe(EXT_NET_DEF, EXT_NET_WEIGHTS)
+        
     end = time.time()
     print('Extractor loading time:', (end - start))    
 
@@ -175,32 +181,39 @@ def main(args):
                 
                 # transform image       
                 start = time.time()
-                face = preprocess_image(face, mean)
+                face = preprocess_image(face, mean, side=args.side)
                 end = time.time()
                 preproc_time = end - start
                 print('\tPreProc:', preproc_time, 's')
 
                 # run the net and return prediction
-                extractor.blobs['data'].data[...] = face
-                # extractor.setInput(face)
                 start = time.time()
-                descriptor = extractor.forward(end=LAYER)[LAYER].squeeze()
-                # descriptor = extractor.forward(LAYER)
+                if args.use_caffe:
+                    extractor.blobs['data'].data[...] = face
+                    descriptor = extractor.forward(end=LAYER)[LAYER].squeeze()
+                else:
+                    extractor.setInput(face)
+                    descriptor = extractor.forward(LAYER)
                 end = time.time()
                 extraction_time = end - start
                 print('\tExtract:', extraction_time, 's')
-                # print(descriptor.shape)
-                # np.savetxt(sys.stdout, descriptor, fmt='%g')
                 
                 if args.people:
                     start = time.time()
                     descriptor = normalize(descriptor.reshape(1,-1))
-                    person_id, confidence = knn_score(descriptor, auth_descriptors, auth_id)
-                    # person_id = knn.predict(descriptor)
+                    
+                    if args.use_sklearn_knn:  # sklearn knn 
+                        confidences = knn.predict_proba(descriptor)
+                        person_id = np.argmax(confidences)
+                        confidence = confidences[person_id]
+                    else:  # VIR knn
+                        person_id, confidence = knn_score(descriptor, auth_descriptors, auth_id, args.k)
+                    
                     end = time.time()
                     match_time = end - start
                     
-                    match = people[person_id] if confidence > args.match_confidence
+                    match = people[person_id] if confidence > args.match_confidence else 'Unauthorized'
+                    match = '{} (Conf = {:.2f})'.format(match, confidence)
                     
                     print('\tMatch  :', match_time, 's,', match)
                     
@@ -215,9 +228,13 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--resolution', nargs=2, default=(1280, 960), type=int, help='capture resolution (W H)')
     parser.add_argument('-f', '--framerate', default=1, type=int, help='capture framerate')
     parser.add_argument('--detection-confidence', '--det', type=float, default=0.5, help='minimum probability to filter weak detections')
-    parser.add_argument('--match-confidence', '--match', type=float, default=0.7, help='minimum confidence to accept authentication')
+    parser.add_argument('--match-confidence', '--match', type=float, default=0.417, help='minimum confidence to accept authentication')
+    parser.add_argument('-s', '--side', default=224, type=int, help='face side for feature extraction')
     parser.add_argument('-p', '--people', nargs=2, help='authenticated people\'s ID and features')
     parser.add_argument('-k', default=10, type=int, help='k for kNN classification')
+    parser.add_argument('--use-sklearn-knn', action='store_true', help='use sklearn kNN classifier')
+    parser.set_defaults(use_sklearn_knn=False)
+    
     args = parser.parse_args()
     
     main(args)
