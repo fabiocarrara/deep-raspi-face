@@ -1,2 +1,11 @@
 # ignore the face detector model files
 detector/
+
+# ignore faces db
+dipendenti_VGG2_features.*
+
+# ignore faces id
+listaID.*
+
+*.pyc
+*.swp
