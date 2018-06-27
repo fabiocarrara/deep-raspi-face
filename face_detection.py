@@ -1,10 +1,10 @@
+from __future__ import print_function
 import sys
 import os
 import cv2
 import time
 import numpy as np
 import skimage.transform
-from __future__ import print_function
 from sklearn.preprocessing import normalize
 from webcam_video_stream import WebcamVideoStream
 
@@ -237,8 +237,9 @@ def recognize(args):
         if len(faces) != 0:
             for i in range(len(bb)):
             	cv2.rectangle(img, bb[i][:2], bb[i][2:4], (0, 255, 0), 2)
+            for match in matches:
                 cv2.putText(img,
-                            matches[i],
+                            match,
                             (50, 50*(i+1)), # x, y of top left corner of text
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.7,

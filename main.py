@@ -1,5 +1,5 @@
 import argparse
-from face_training.py import train
+from face_training import train
 from face_detection import recognize
 
 if __name__ == '__main__':
@@ -25,6 +25,7 @@ if __name__ == '__main__':
 
     if args.training:
         train(args)
+        pass
     else:
         recognize(args)
 
