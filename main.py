@@ -8,7 +8,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-t', '--training', action='store_true', help='Acquire new faces (defualt: False)')
     parser.add_argument('-m', '--model', default='resnet50_ft', choices=['senet50_ft', 'senet50_scratch', 'resnet50_ft', 'resnet50_scratch'])
-    parser.add_argument('-pc', '--usePiCamera', action='store_true', help='If True it uses piCamera. If false it uses openCV VideoCapture (default: False)')
+    parser.add_argument('-pc', '--usePiCamera', action='store_true', help='If True it uses piCamera. If false it uses openCV VideoCapture')
     parser.add_argument('-r', '--resolution', nargs=2, default=(1280, 960), type=int, help='capture resolution (W H)')
     parser.add_argument('-f', '--framerate', default=1, type=int, help='capture framerate')
     parser.add_argument('--detection-confidence', '--det', type=float, default=0.5, help='minimum probability to filter weak detections')
@@ -25,7 +25,6 @@ if __name__ == '__main__':
 
     if args.training:
         train(args)
-        pass
     else:
         recognize(args)
 

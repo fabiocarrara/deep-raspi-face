@@ -249,5 +249,5 @@ def recognize(args):
             cv2.imshow('frame',gray)
             cv2.waitKey(1)
 
-        time.sleep(1)
+#        time.sleep(1)
 
