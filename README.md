@@ -1,12 +1,5 @@
 # deep-raspi-face
-Indoor on-board Face Verification using Deep Learning on Rapsberry Pi
+This code implements the facial verification system on Raspberry Pi presented in:
 
-## Preparation
-
-Download pre-trained models for face detection and description:
-
-```sh
-    ./download_models.sh
-```
-
+> Amato, G.; Carrara, F.; Falchi, F.; Gennaro, C.; Vairo, C.; "Facial-based Intrusion Detection System with Deep Learning in Embedded Devices", In 2018 International Conference on Sensors, Signal and Image Processing (SSIP) Prague, Czech Republic, October 2018
 
